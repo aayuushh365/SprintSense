@@ -7,6 +7,6 @@ pip install -r requirements.txt
 streamlit run app/Home.py
 
 ## Docs
-- [PRD v0.1](docs/PRD_v0.1.md)
-- [Research notes](docs/research_notes.md)
-- [KPI tree (Mermaid)](docs/kpi_tree.mmd)
+- [PRD v0.1](/docs/PRD_v0.1.md)
+- [Research notes](/docs/research_notes.md)
+- [KPI tree (Mermaid)](/docs/kpi_tree.mmd)
