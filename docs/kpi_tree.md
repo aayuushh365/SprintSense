@@ -1,3 +1,4 @@
+```mermaid
 graph TD
   A[TCD - Time to Confident Sprint Decision]
   A --> B[Clarity and Coverage]
