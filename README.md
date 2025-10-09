@@ -1,3 +1,4 @@
+[![CI](https://github.com/aayuushh365/sprintSense/actions/workflows/ci.yml/badge.svg)](../../actions)
 # SprintSense
 Team-level sprint analytics in Streamlit. Load Jira-style CSVs, compute KPIs, and review trends.
 
