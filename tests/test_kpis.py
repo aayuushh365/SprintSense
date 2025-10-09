@@ -44,3 +44,22 @@ def test_calc_velocity_and_throughput():
     assert len(thr) == 2
     assert thr.loc[thr["sprint_id"] == "S1", "throughput_issues"].iloc[0] == 3
     assert thr.loc[thr["sprint_id"] == "S2", "throughput_issues"].iloc[0] == 3
+
+from app.lib.kpis import calc_carryover_rate, calc_cycle_time, calc_defect_ratio
+
+def test_more_kpis():
+    df = _sample_df()
+    car = calc_carryover_rate(df)
+    cyc = calc_cycle_time(df)
+    dr  = calc_defect_ratio(df)
+
+    # carryover: S1 has SS-4 unfinished out of 4 committed -> 1/4 = 0.25; S2 has SS-8 unfinished out of 4 committed -> 1/4 = 0.25
+    assert dict(zip(car.sprint_id, car.carryover_rate.round(2))) == {"S1": 0.25, "S2": 0.25}
+
+    # cycle time medians should be positive numbers
+    assert set(cyc.columns) == {"sprint_id","cycle_median_days"}
+    assert (cyc.cycle_median_days > 0).all()
+
+    # defect ratio: one bug resolved each sprint out of 3 resolved -> 1/3 ≈ 0.333
+    vals = {k: round(v,3) for k,v in zip(dr.sprint_id, dr.defect_ratio)}
+    assert vals == {"S1": 0.333, "S2": 0.333}
