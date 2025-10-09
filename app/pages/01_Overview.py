@@ -9,6 +9,7 @@ from app.lib.kpis import (
     calc_cycle_time,
     calc_defect_ratio,
 )
+from app.lib.data_access import load_sprint_csv
 
 st.set_page_config(page_title="Overview", layout="wide")
 st.title("Overview")
@@ -50,3 +51,5 @@ with c4:
 
 st.subheader("Defect ratio")
 st.dataframe(dr, use_container_width=True)
+
+df = load_sprint_csv("data/sample_sprint.csv")
