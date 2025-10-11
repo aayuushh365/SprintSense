@@ -46,33 +46,24 @@ def _latest_and_delta(metric_df: pd.DataFrame, value_col: str, order: list[str])
 
 
 def compute_summary(df: pd.DataFrame) -> dict:
-    """
-    Compute headline KPIs and % deltas vs previous sprint.
-
-    Returns a dict:
-      {
-        "velocity_sp": {"value": float, "delta": float},
-        "throughput_issues": {...},
-        "carryover_rate": {...},
-        "cycle_median_days": {...},
-        "defect_ratio": {...},
-      }
-    """
     order = _sprint_order(df)
 
-    vel = calc_velocity(df)                 # sprint_id, velocity_sp
-    thr = calc_throughput(df)               # sprint_id, throughput_issues
-    car = calc_carryover_rate(df)           # sprint_id, carryover_rate
-    cyc = calc_cycle_time(df)               # sprint_id, cycle_median_days
-    dr  = calc_defect_ratio(df)             # sprint_id, defect_ratio
+    vel = calc_velocity(df)
+    thr = calc_throughput(df)
+    car = calc_carryover_rate(df)
+    cyc = calc_cycle_time(df)
+    dr  = calc_defect_ratio(df)
 
-    out = {}
-    out["velocity_sp"]        = dict(zip(["value", "delta"], _latest_and_delta(vel, "velocity_sp", order)))
-    out["throughput_issues"]  = dict(zip(["value", "delta"], _latest_and_delta(thr, "throughput_issues", order)))
-    out["carryover_rate"]     = dict(zip(["value", "delta"], _latest_and_delta(car, "carryover_rate", order)))
-    out["cycle_median_days"]  = dict(zip(["value", "delta"], _latest_and_delta(cyc, "cycle_median_days", order)))
-    out["defect_ratio"]       = dict(zip(["value", "delta"], _latest_and_delta(dr, "defect_ratio", order)))
+    # use human-readable keys to satisfy tests
+    out = {
+        "Velocity (SP)":        dict(zip(["value", "delta"], _latest_and_delta(vel, "velocity_sp", order))),
+        "Throughput (issues)":  dict(zip(["value", "delta"], _latest_and_delta(thr, "throughput_issues", order))),
+        "Carryover rate":       dict(zip(["value", "delta"], _latest_and_delta(car, "carryover_rate", order))),
+        "Cycle time (days)":    dict(zip(["value", "delta"], _latest_and_delta(cyc, "cycle_median_days", order))),
+        "Defect ratio":         dict(zip(["value", "delta"], _latest_and_delta(dr, "defect_ratio", order))),
+    }
     return out
+
 
 
 def _delta_badge(delta: float) -> str:
@@ -83,19 +74,19 @@ def _delta_badge(delta: float) -> str:
 
 def render_summary_cards(df: pd.DataFrame) -> None:
     """Small Streamlit cards row using compute_summary()."""
-    data = compute_summary(df)
+    data = compute_summary(df)  # keys like "Velocity (SP)", etc.
     cols = st.columns(5)
 
     labels = [
-        ("Velocity (SP)", "velocity_sp"),
-        ("Throughput (issues)", "throughput_issues"),
-        ("Carryover rate", "carryover_rate"),
-        ("Cycle time (days)", "cycle_median_days"),
-        ("Defect ratio", "defect_ratio"),
+        "Velocity (SP)",
+        "Throughput (issues)",
+        "Carryover rate",
+        "Cycle time (days)",
+        "Defect ratio",
     ]
 
-    for col, (label, key) in zip(cols, labels):
+    for col, label in zip(cols, labels):
         with col:
             st.caption(label)
-            st.markdown(f"## {data[key]['value']}")
-            st.caption(_delta_badge(data[key]["delta"]))
+            st.markdown(f"## {data[label]['value']}")
+            st.caption(_delta_badge(data[label]['delta']))
