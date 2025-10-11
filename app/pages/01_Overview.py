@@ -22,6 +22,9 @@ st.caption("Upload a Jira-style CSV or use the bundled sample.")
 SESSION_KEY = "validated_df"
 SOURCE_KEY  = "data_source"
 
+SHARED_DF_KEY = "df_current"     # <- for other pages (e.g., Trends)
+SHARED_SRC_KEY = "source_label"  # <-
+
 @st.cache_data(show_spinner=False)
 def _read_and_validate(path: str) -> pd.DataFrame:
     return validate_and_normalize(load_sprint_csv(path))
@@ -36,28 +39,41 @@ with st.expander("Upload sprint CSV", expanded=False):
     c1, c2 = st.columns([1,1])
     with c1:
         if st.button("Use uploaded", type="primary", disabled=up is None):
-            st.session_state[SESSION_KEY] = _validate_uploaded(up)
-            st.session_state[SOURCE_KEY] = f"uploaded: {up.name}"
+            df_up = _validate_uploaded(up)
+            st.session_state[SESSION_KEY] = df_up
+            st.session_state[SOURCE_KEY]  = f"uploaded: {up.name}"
+            # share for other pages
+            st.session_state[SHARED_DF_KEY]  = df_up
+            st.session_state[SHARED_SRC_KEY] = f"Using {st.session_state[SOURCE_KEY]} · {len(df_up)} rows · {df_up['sprint_id'].nunique()} sprint(s)"
             st.toast("Loaded uploaded CSV.", icon="✅")
     with c2:
         if st.button("Use bundled sample"):
-            st.session_state[SESSION_KEY] = _read_and_validate("data/sample_sprint.csv")
-            st.session_state[SOURCE_KEY] = "sample: data/sample_sprint.csv"
+            df_sm = _read_and_validate("data/sample_sprint.csv")
+            st.session_state[SESSION_KEY] = df_sm
+            st.session_state[SOURCE_KEY]  = "sample: data/sample_sprint.csv"
+            # share for other pages
+            st.session_state[SHARED_DF_KEY]  = df_sm
+            st.session_state[SHARED_SRC_KEY] = f"Using {st.session_state[SOURCE_KEY]} · {len(df_sm)} rows · {df_sm['sprint_id'].nunique()} sprint(s)"
             st.toast("Loaded sample CSV.", icon="📦")
 
 # Fallback on first load
 if SESSION_KEY not in st.session_state:
-    st.session_state[SESSION_KEY] = _read_and_validate("data/sample_sprint.csv")
-    st.session_state[SOURCE_KEY] = "sample: data/sample_sprint.csv"
+    df0 = _read_and_validate("data/sample_sprint.csv")
+    st.session_state[SESSION_KEY] = df0
+    st.session_state[SOURCE_KEY]  = "sample: data/sample_sprint.csv"
+    # share for other pages
+    st.session_state[SHARED_DF_KEY]  = df0
+    st.session_state[SHARED_SRC_KEY] = f"Using {st.session_state[SOURCE_KEY]} · {len(df0)} rows · {df0['sprint_id'].nunique()} sprint(s)"
 
-st.info(f"Using **{st.session_state[SOURCE_KEY]}** · "
-        f"{len(st.session_state[SESSION_KEY])} rows · "
-        f"{st.session_state[SESSION_KEY]['sprint_id'].nunique()} sprint(s)")
-
+# Local handle + ensure shared keys are in sync
 df = st.session_state[SESSION_KEY]
+st.session_state[SHARED_DF_KEY]  = df
+st.session_state[SHARED_SRC_KEY] = f"Using {st.session_state[SOURCE_KEY]} · {len(df)} rows · {df['sprint_id'].nunique()} sprint(s)"
+
+st.info(st.session_state[SHARED_SRC_KEY])
 
 st.subheader("KPIs")
-render_summary_cards(df)  # ⬅ summary cards
+render_summary_cards(df)  # summary cards
 
 # ---------- Tables ----------
 vel = calc_velocity(df)
