@@ -1,4 +1,3 @@
-# tests/test_ui_kpis.py
 import pandas as pd
 from app.lib.ui_kpis import compute_summary
 

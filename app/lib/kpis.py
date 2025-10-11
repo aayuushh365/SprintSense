@@ -1,4 +1,3 @@
-# app/lib/kpis.py
 import pandas as pd
 
 # ---------- helpers ----------
