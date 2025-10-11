@@ -15,14 +15,18 @@ from app.lib.kpis import (
 st.set_page_config(page_title="Trends", layout="wide")
 st.title("Trends")
 
-# ---------- Load dataset (use session if present) ----------
-df = st.session_state.get("df_current")
-source_label = st.session_state.get("source_label")
+# ---------- Load dataset (prefer session if present) ----------
+df = (
+    st.session_state.get("validated_df")         # from Overview (Week 2.5)
+    or st.session_state.get("df_current")        # older key (fallback)
+)
+source_label = (
+    st.session_state.get("data_source")
+    or st.session_state.get("source_label")
+)
 
 if df is None:
-    # Fallback to bundled sample
     df = validate_and_normalize(load_sprint_csv("data/sample_sprint.csv"))
-    # helpful banner
     sprints = df["sprint_id"].nunique()
     rows = len(df)
     source_label = f"Using sample: data/sample_sprint.csv · {rows} rows · {sprints} sprint(s)"
@@ -55,6 +59,36 @@ kpi = kpi.sort_values("sprint_id").reset_index(drop=True)
 st.subheader("KPI trends (per sprint)")
 st.dataframe(kpi, use_container_width=True)
 
+# ---------- Filters (operate on KPI table) ----------
+st.sidebar.subheader("Filters")
+all_sprints = list(kpi["sprint_id"].astype(str).unique())
+sprint_range = st.sidebar.multiselect("Select sprint(s)", all_sprints, default=all_sprints)
+
+kpi_cols = ["velocity_sp", "throughput_issues", "carryover_rate", "cycle_median_days", "defect_ratio"]
+selected_kpis = st.sidebar.multiselect(
+    "Select KPIs to compare",
+    kpi_cols,
+    default=["velocity_sp", "throughput_issues"]
+)
+
+# Filter the KPI table by selected sprints
+kpi_filtered = kpi[kpi["sprint_id"].astype(str).isin(sprint_range)]
+
+# ---------- KPI Comparison (melt the KPI table) ----------
+if selected_kpis:
+    df_melted = kpi_filtered.melt(
+        id_vars=["sprint_id"],
+        value_vars=selected_kpis,
+        var_name="KPI",
+        value_name="Value"
+    )
+    st.subheader("KPI Comparison")
+    fig = px.line(df_melted, x="sprint_id", y="Value", color="KPI",
+                  markers=True, title="Selected KPI Trends")
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("Select at least one KPI from the sidebar.")
+
 # ---------- Download export ----------
 csv_bytes = kpi.to_csv(index=False).encode("utf-8")
 st.download_button(
@@ -65,9 +99,8 @@ st.download_button(
     use_container_width=True,
 )
 
-# ---------- Charts ----------
+# ---------- Individual Charts ----------
 st.subheader("Charts")
-
 c1, c2 = st.columns(2)
 with c1:
     st.plotly_chart(px.line(kpi, x="sprint_id", y="velocity_sp",
