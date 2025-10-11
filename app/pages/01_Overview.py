@@ -1,80 +1,71 @@
 # app/pages/01_Overview.py
-import sys, os, io, hashlib
+import sys, os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-from app.lib.schema import validate_and_normalize
 from app.lib.data_access import load_sprint_csv
+from app.lib.schema import validate_and_normalize
 from app.lib.kpis import (
-    calc_velocity,
-    calc_throughput,
-    calc_carryover_rate,
-    calc_cycle_time,
-    calc_defect_ratio,
+    calc_velocity, calc_throughput, calc_carryover_rate,
+    calc_cycle_time, calc_defect_ratio,
 )
+from app.lib.ui_kpis import render_summary_cards
 
 st.set_page_config(page_title="Overview", layout="wide")
 st.title("Overview")
 st.caption("Upload a Jira-style CSV or use the bundled sample.")
-st.divider()
 
-# -------- caching helpers --------
-@st.cache_data(show_spinner=False)
-def _df_from_bytes(md5: str, raw: bytes) -> pd.DataFrame:
-    df = pd.read_csv(io.BytesIO(raw))
-    return validate_and_normalize(df)
+# ---------- Session persistence ----------
+SESSION_KEY = "validated_df"
+SOURCE_KEY  = "data_source"
 
 @st.cache_data(show_spinner=False)
-def _df_from_sample(sample_path: str, mtime: float) -> pd.DataFrame:
-    df = load_sprint_csv(sample_path)
+def _read_and_validate(path: str) -> pd.DataFrame:
+    return validate_and_normalize(load_sprint_csv(path))
+
+@st.cache_data(show_spinner=False)
+def _validate_uploaded(file: bytes) -> pd.DataFrame:
+    df = pd.read_csv(file)
     return validate_and_normalize(df)
 
-def _hash_bytes(b: bytes) -> str:
-    return hashlib.md5(b).hexdigest()
+with st.expander("Upload sprint CSV", expanded=False):
+    up = st.file_uploader("CSV", type=["csv"])
+    c1, c2 = st.columns([1,1])
+    with c1:
+        if st.button("Use uploaded", type="primary", disabled=up is None):
+            st.session_state[SESSION_KEY] = _validate_uploaded(up)
+            st.session_state[SOURCE_KEY] = f"uploaded: {up.name}"
+            st.toast("Loaded uploaded CSV.", icon="✅")
+    with c2:
+        if st.button("Use bundled sample"):
+            st.session_state[SESSION_KEY] = _read_and_validate("data/sample_sprint.csv")
+            st.session_state[SOURCE_KEY] = "sample: data/sample_sprint.csv"
+            st.toast("Loaded sample CSV.", icon="📦")
 
-# -------- file selection --------
-csv_sample_path = "data/sample_sprint.csv"
-uploaded = st.file_uploader("Upload sprint CSV", type=["csv"])
+# Fallback on first load
+if SESSION_KEY not in st.session_state:
+    st.session_state[SESSION_KEY] = _read_and_validate("data/sample_sprint.csv")
+    st.session_state[SOURCE_KEY] = "sample: data/sample_sprint.csv"
 
-use_sample = False
-df = None
+st.info(f"Using **{st.session_state[SOURCE_KEY]}** · "
+        f"{len(st.session_state[SESSION_KEY])} rows · "
+        f"{st.session_state[SESSION_KEY]['sprint_id'].nunique()} sprint(s)")
 
-try:
-    if uploaded is not None:
-        raw = uploaded.getvalue()
-        md5 = _hash_bytes(raw)
-        df = _df_from_bytes(md5, raw)
-        st.success(f"Loaded `{uploaded.name}` · {len(df)} rows · "
-                   f"{df['sprint_id'].nunique()} sprint(s)")
-        st.caption(f"Cache key: {md5[:8]}")
-    else:
-        # fallback to sample
-        mtime = os.path.getmtime(csv_sample_path)
-        df = _df_from_sample(csv_sample_path, mtime)
-        use_sample = True
-        st.info(f"Using sample: `{csv_sample_path}` · {len(df)} rows · "
-                f"{df['sprint_id'].nunique()} sprint(s)")
-except FileNotFoundError:
-    st.error("Missing `data/sample_sprint.csv`. Upload a CSV to proceed.")
-    st.stop()
-except ValueError as e:
-    st.error(f"Schema validation failed: {e}")
-    st.stop()
+df = st.session_state[SESSION_KEY]
 
-st.divider()
 st.subheader("KPIs")
+render_summary_cards(df)  # ⬅ summary cards
 
-# -------- compute KPIs --------
+# ---------- Tables ----------
 vel = calc_velocity(df)
 thr = calc_throughput(df)
 car = calc_carryover_rate(df)
 cyc = calc_cycle_time(df)
 dr  = calc_defect_ratio(df)
 
-# -------- tables --------
 c1, c2 = st.columns(2)
 with c1:
     st.subheader("Velocity (story points) by sprint")
@@ -94,8 +85,7 @@ with c4:
 st.subheader("Defect ratio")
 st.dataframe(dr, use_container_width=True)
 
-# -------- charts --------
-st.divider()
+# ---------- Charts ----------
 st.subheader("Charts")
 st.plotly_chart(px.bar(vel, x="sprint_id", y="velocity_sp", title="Velocity by sprint"),
                 use_container_width=True)
@@ -107,9 +97,3 @@ st.plotly_chart(px.line(cyc, x="sprint_id", y="cycle_median_days", markers=True,
                 use_container_width=True)
 st.plotly_chart(px.line(dr, x="sprint_id", y="defect_ratio", markers=True, title="Defect ratio"),
                 use_container_width=True)
-
-# -------- cache controls --------
-with st.expander("Cache"):
-    if st.button("Clear cached data"):
-        st.cache_data.clear()
-        st.success("Cache cleared. Reload the page.")
