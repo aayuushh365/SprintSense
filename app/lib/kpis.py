@@ -10,11 +10,18 @@ def _parse_dates(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     return out
 
 def _resolved_within_sprint(df: pd.DataFrame) -> pd.DataFrame:
-    """Rows whose resolved time falls within their sprint window."""
-    d = df.dropna(subset=["sprint_id", "sprint_start", "sprint_end"])
-    d = _parse_dates(d, ["resolved", "sprint_start", "sprint_end"])
-    mask = d["resolved"].notna() & (d["resolved"] >= d["sprint_start"]) & (d["resolved"] <= d["sprint_end"])
+    d = df.copy()
+
+    mask = (
+        d["sprint_id"].notna()
+        & d["sprint_start"].notna()
+        & d["sprint_end"].notna()
+        & d["resolved"].notna()
+        & (d["resolved"] >= d["sprint_start"])
+        & (d["resolved"] <= d["sprint_end"])
+    )
     return d.loc[mask]
+
 
 # ---------- KPIs to be imported by tests ----------
 def calc_velocity(df: pd.DataFrame) -> pd.DataFrame:
