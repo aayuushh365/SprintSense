@@ -70,19 +70,19 @@ def validate_and_normalize(df: pd.DataFrame, validate_rows: bool = True) -> pd.D
         present = [c for c in CSV_HEADERS if c in out.columns]
 
         def _noneify_nan(rec: dict) -> dict:
-            # Replace pandas/NumPy NA with None so Pydantic sees proper nulls
             return {k: (None if pd.isna(v) else v) for k, v in rec.items()}
 
         errs = []
-        # Use object dtype for optional numeric columns to avoid NaN sneaking back
         for c in OPTIONAL_NUM_COLS:
             if c in out.columns:
-                out[c] = out[c].where(pd.notna(out[c]), None).astype("object")
+                s = out[c].astype("object")
+                out[c] = s.where(pd.notna(s), None)
 
-        # Same for optional string columns (already object, but be explicit)
         for c in OPTIONAL_STR_COLS:
             if c in out.columns:
-                out[c] = out[c].where(pd.notna(out[c]), None).astype("object")
+                s = out[c].astype("object")
+                out[c] = s.where(pd.notna(s), None)
+
 
         for idx, rec in enumerate(out[present].to_dict(orient="records")):
             try:

@@ -3,6 +3,11 @@ import pandas as pd
 
 def _resolved_within_sprint(df: pd.DataFrame) -> pd.DataFrame:
     d = df.copy()
+    # Defensive: coerce date-like columns to datetime (handles strings in tests/uploads)
+    for c in ("sprint_start", "sprint_end", "resolved"):
+        if c in d.columns:
+            d[c] = pd.to_datetime(d[c], errors="coerce", utc=True)
+
     ok = (
         d["sprint_id"].notna()
         & d["sprint_start"].notna()
@@ -13,6 +18,7 @@ def _resolved_within_sprint(df: pd.DataFrame) -> pd.DataFrame:
         & (d["status"].str.lower().str.contains("done") | d["status"].str.lower().str.contains("closed"))
     )
     return d[ok]
+
 
 def calc_velocity(df: pd.DataFrame) -> pd.DataFrame:
     d = _resolved_within_sprint(df)
@@ -35,10 +41,14 @@ def calc_carryover_rate(df: pd.DataFrame) -> pd.DataFrame:
 
 def calc_cycle_time(df: pd.DataFrame) -> pd.DataFrame:
     d = _resolved_within_sprint(df).copy()
+    for c in ("created", "resolved"):
+        if c in d.columns:
+            d[c] = pd.to_datetime(d[c], errors="coerce", utc=True)
     d["cycle_days"] = (d["resolved"] - d["created"]).dt.total_seconds() / 86400.0
     g = d.groupby("sprint_id")["cycle_days"]
     out = g.median().reset_index(name="cycle_median_days").round(2)
     return out
+
 
 def calc_defect_ratio(df: pd.DataFrame) -> pd.DataFrame:
     d = _resolved_within_sprint(df).copy()

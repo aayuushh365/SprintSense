@@ -3,7 +3,6 @@ import pandas as pd
 from app.lib.forecast import mc_velocity_forecast
 
 def _df_with_velocity(vals):
-    # Minimal DF that yields given velocities per sprint S1..Sn
     rows = []
     for i, v in enumerate(vals, start=1):
         rows.append({
@@ -23,7 +22,6 @@ def _df_with_velocity(vals):
     return pd.DataFrame(rows)
 
 def test_mc_velocity_forecast_deterministic(monkeypatch):
-    # History [3, 5] → force sampler to always return [[3,5,3],[5,3,5],...]
     hist = np.array([3.0, 5.0])
 
     def fake_choice(a, size=None, replace=True):
@@ -38,7 +36,6 @@ def test_mc_velocity_forecast_deterministic(monkeypatch):
     df = _df_with_velocity([3.0, 5.0])
     fc = mc_velocity_forecast(df, horizon=3, draws=1000)
 
-    # With forced samples, mean=p50=pattern column values; p10=p90 same
     assert list(fc["step"]) == [1, 2, 3]
     assert np.allclose(fc["mean"].values, [3.0, 5.0, 3.0])
     assert np.allclose(fc["p50"].values,  [3.0, 5.0, 3.0])
