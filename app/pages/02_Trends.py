@@ -126,9 +126,12 @@ with cB:
 if kpi["sprint_id"].nunique() < 3:
     st.warning("⚠ Forecast confidence is low (limited history). Add more sprints for better accuracy.")
 
-df_raw = st.session_state.get("validated_df", None) or st.session_state.get("df_current", None)
+df_raw = st.session_state.get("validated_df", None)
+if df_raw is None:
+    df_raw = st.session_state.get("df_current", None)
 if df_raw is None:
     df_raw = validate_and_normalize(load_sprint_csv("data/sample_sprint.csv"))
+
 
 fc_base = mc_velocity_forecast(df_raw, horizon=int(horizon), draws=int(draws))
 
@@ -149,8 +152,11 @@ else:
     fc_base["future_sprint"] = fc_base["step"].astype(str)
 
 for level, msg in velocity_insights(df_raw, fc_base):
-    getattr(st, level)(msg) if hasattr(st, level) else st.write(msg)
-
+    fn = getattr(st, level, None)  # st.info / st.success / st.warning
+    if callable(fn):
+        fn(msg)
+    else:
+        st.write(msg)
 st.dataframe(
     fc_base.rename(columns={"mean":"mean (SP)","p10":"p10 (SP)","p50":"p50 (SP)","p90":"p90 (SP)"}),
     use_container_width=True
