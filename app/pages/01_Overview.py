@@ -29,6 +29,36 @@ from app.lib.adapt import (
 st.set_page_config(page_title="Overview", layout="wide")
 st.title("Overview")
 st.caption("Upload a Jira-style CSV or use the bundled sample.")
+with st.expander("Read this first", expanded=False):
+    st.markdown(
+        """
+        **What SprintSense expects**
+
+        • Each row = one issue / ticket  
+        • Must have at least:  
+          - `issue_id` (unique ID like ABC-123)  
+          - `issue_type` (story / bug / task etc)  
+          - `status` (Done / In Progress / etc)  
+          - `story_points` (number, can be blank)  
+          - `created` (when work started)  
+          - `sprint_id` (which sprint it belongs to, like S12)  
+          - `sprint_start` and `sprint_end` (dates for that sprint)
+
+        • Optional fields like `assignee`, `resolved`, `labels`, etc help improve analytics but are not mandatory.
+
+        **Why some uploads fail**
+
+        • If your CSV doesn't have those columns we can't calculate velocity, throughput, cycle time, or forecast.  
+        • Some Jira exports use different headers. We are building column mapping.  
+          This is partially live but still experimental.
+
+        **Need a template?**
+
+        • Scroll down to "Download cleaned CSV".  
+          That file is already normalized to the exact shape SprintSense expects.  
+          Match your data to that format for best results.
+        """
+    )
 
 # -----------------------------------------------------------------------------
 # Session keys (shared across pages)

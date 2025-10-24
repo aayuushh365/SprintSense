@@ -36,6 +36,29 @@ if _df is None:
 if source_label:
     st.info(source_label)
 
+# --- data quality gates for trends / forecast ---
+unique_sprints = _df["sprint_id"].nunique() if "sprint_id" in _df.columns else 0
+null_rate_velocity_inputs = (
+    _df[["sprint_id", "story_points", "status", "resolved", "sprint_start", "sprint_end"]]
+    .isna()
+    .mean(numeric_only=False)
+    .sort_values(ascending=False)
+    if set(["sprint_id","story_points","status","resolved","sprint_start","sprint_end"]).issubset(_df.columns)
+    else None
+)
+
+if unique_sprints < 3:
+    st.warning(
+        f"Only {unique_sprints} sprint(s) detected. Trend lines and forecast will be noisy."
+    )
+
+if null_rate_velocity_inputs is not None and (null_rate_velocity_inputs > 0.2).any():
+    st.warning(
+        "Some key columns have a lot of missing data (>20%). "
+        "Velocity / cycle time may be inaccurate."
+    )
+
+
 # KPI table
 vel = calc_velocity(_df)
 thr = calc_throughput(_df)
@@ -169,6 +192,14 @@ fig_fc.add_trace(go.Scatter(x=fc_base["future_sprint"], y=fc_base["p50"], name="
 fig_fc = tidy(fig_fc, title="Velocity forecast", x_title="Future sprint", y_title="Story points (SP)")
 fig_fc.update_layout(legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.05))
 st.plotly_chart(fig_fc, use_container_width=True)
+st.caption(
+    "**How to read this forecast:**\n"
+    "- `p50` is the median. Half of future sprints land at or above this.\n"
+    "- `p10` is the conservative case. Only ~10% of sprints end lower than this.\n"
+    "- `p90` is the optimistic case. ~90% of sprints stay below this.\n"
+    "We generate these bands by sampling historical velocity thousands of times "
+    "(`Monte-Carlo draws`). This is not commitment. It's a risk envelope."
+)
 
 # What-if
 st.subheader("What-if scenario")
