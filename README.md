@@ -2,7 +2,7 @@
 # SprintSense  
 *A lightweight sprint analytics and predictive delivery intelligence tool.*
 
-<img src="./assets/ChatGPT Image Nov 20, 2025, 09_19_26 PM.png"Sprint.png" width="160" />
+<img src="./assets/ChatGPT Image Nov 20, 2025, 09_19_26 PM.png" width="160" />
 
 ## Overview
 SprintSense is a streamlined analytics platform designed to help product teams understand how they are performing and forecast how likely they are to meet upcoming sprint commitments.  
