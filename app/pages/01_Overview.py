@@ -1,11 +1,15 @@
-import sys, os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+import sys
+import os
+
+sys.path.append(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
+)
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 
-from app.lib.plot_helpers import tidy
 from app.lib.data_access import load_sprint_csv
 from app.lib.schema import validate_and_normalize
 from app.lib.kpis import (
@@ -22,432 +26,523 @@ from app.lib.adapt import (
     REQUIRED_CANONICAL,
     OPTIONAL_CANONICAL,
 )
+from app.lib.plot_helpers import tidy
 
-# -----------------------------------------------------------------------------
-# Page setup
-# -----------------------------------------------------------------------------
-st.set_page_config(page_title="Overview", layout="wide")
+TEMPLATE_COLUMNS = [
+    "issue_id",
+    "issue_type",
+    "status",
+    "story_points",
+    "assignee",
+    "reporter",
+    "created",
+    "updated",
+    "resolved",
+    "sprint_id",
+    "sprint_name",
+    "sprint_start",
+    "sprint_end",
+    "parent_id",  # optional
+]
+
+
+def make_template_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=TEMPLATE_COLUMNS)
+
+
+SESSION_KEY = "validated_df"
+SOURCE_KEY = "data_source"
+SHARED_DF_KEY = "df_current"
+SHARED_SRC_KEY = "source_label"
+RAW_UPLOAD_KEY = "raw_upload_df"
+MAPPING_KEY = "current_mapping"
+ERROR_LOG_KEY = "upload_error_log"
+
+
+st.set_page_config(page_title="Overview · SprintSense", layout="wide")
 st.title("Overview")
-st.caption("Upload a Jira-style CSV or use the bundled sample.")
-with st.expander("Read this first", expanded=False):
-    st.markdown(
-        """
-        **What SprintSense expects**
+st.caption("Upload a Jira style CSV or use the bundled sample.")
 
-        • Each row = one issue / ticket  
-        • Must have at least:  
-          - `issue_id` (unique ID like ABC-123)  
-          - `issue_type` (story / bug / task etc)  
-          - `status` (Done / In Progress / etc)  
-          - `story_points` (number, can be blank)  
-          - `created` (when work started)  
-          - `sprint_id` (which sprint it belongs to, like S12)  
-          - `sprint_start` and `sprint_end` (dates for that sprint)
 
-        • Optional fields like `assignee`, `resolved`, `labels`, etc help improve analytics but are not mandatory.
-
-        **Why some uploads fail**
-
-        • If your CSV doesn't have those columns we can't calculate velocity, throughput, cycle time, or forecast.  
-        • Some Jira exports use different headers. We are building column mapping.  
-          This is partially live but still experimental.
-
-        **Need a template?**
-
-        • Scroll down to "Download cleaned CSV".  
-          That file is already normalized to the exact shape SprintSense expects.  
-          Match your data to that format for best results.
-        """
-    )
-
-# -----------------------------------------------------------------------------
-# Session keys (shared across pages)
-# -----------------------------------------------------------------------------
-SESSION_KEY      = "validated_df"        # canonical sprint dataframe currently in use
-SOURCE_KEY       = "data_source"         # human string like 'uploaded: foo.csv'
-SHARED_DF_KEY    = "df_current"          # same df for other pages
-SHARED_SRC_KEY   = "source_label"        # "Using X · N rows · M sprint(s)"
-LAST_MAPPING_KEY = "_last_mapping"       # remember column mapping choices within session
-LAST_PREVIEW_KEY = "_last_preview"       # preview of last loaded df head()
-
-# -----------------------------------------------------------------------------
-# Cached helpers
-# -----------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def _read_and_validate(path: str) -> pd.DataFrame:
-    """Load known-good CSV from disk and fully validate."""
-    return validate_and_normalize(load_sprint_csv(path))
+    df = load_sprint_csv(path)
+    return validate_and_normalize(df)
+
 
 @st.cache_data(show_spinner=False)
 def _load_csv_bytes(file) -> pd.DataFrame:
-    """Read raw uploaded CSV bytes into a DataFrame. No validation here."""
     return pd.read_csv(file)
 
-# -----------------------------------------------------------------------------
-# Mapping UI for arbitrary uploads
-# -----------------------------------------------------------------------------
-def _mapping_ui(df_raw: pd.DataFrame) -> pd.DataFrame | None:
-    """
-    Show column mapping screen.
-    - Suggest mappings from infer_mapping()
-    - Reuse LAST_MAPPING_KEY if possible
-    - Live preview of adapted/validated data
-    - Returns validated df if user clicks Confirm mapping
-    """
-    st.markdown("#### Map columns")
-    st.caption(
-        "Map your CSV headers to SprintSense fields. "
-        "We’ll try to guess. You can adjust. "
-        "Your choices are remembered for this session."
+
+def _ensure_state_defaults() -> None:
+    if SESSION_KEY not in st.session_state:
+        df0 = _read_and_validate("data/sample_sprint.csv")
+        st.session_state[SESSION_KEY] = df0
+        st.session_state[SOURCE_KEY] = "sample: data/sample_sprint.csv"
+        st.session_state[SHARED_DF_KEY] = df0
+        st.session_state[SHARED_SRC_KEY] = (
+            f"Using {st.session_state[SOURCE_KEY]} · {len(df0)} rows · "
+            f"{df0['sprint_id'].nunique()} sprint(s)"
+        )
+
+    if RAW_UPLOAD_KEY not in st.session_state:
+        st.session_state[RAW_UPLOAD_KEY] = None
+
+    if MAPPING_KEY not in st.session_state:
+        st.session_state[MAPPING_KEY] = None
+
+    if ERROR_LOG_KEY not in st.session_state:
+        st.session_state[ERROR_LOG_KEY] = None
+
+
+def _data_dictionary() -> None:
+    with st.expander("Data dictionary and KPI reference", expanded=False):
+        st.markdown(
+            """
+            **Core columns**
+
+            - `issue_id` unique ticket id like ABC 123
+            - `issue_type` story, bug, task
+            - `status` workflow status such as Done or In Progress
+            - `story_points` numeric effort, can be blank
+            - `created` when work started
+            - `resolved` when work finished
+            - `sprint_id` sprint label such as S12
+            - `sprint_start` calendar start of sprint
+            - `sprint_end` calendar end of sprint
+
+            **Optional columns**
+
+            - `assignee` who owned the work
+            - `reporter` who raised the work
+            - `sprint_name` friendly name such as Sprint 1 Jan 2024
+            - `labels` and other text fields are carried through but not required
+
+            **KPI definitions**
+
+            - Velocity story points completed per sprint
+            - Throughput count of issues completed per sprint
+            - Carryover rate share of work that spills from one sprint into the next
+            - Cycle time median days from created to resolved
+            - Defect ratio share of bugs or defects against total issues
+            """
+        )
+
+
+def _download_template_button_global() -> None:
+    template_df = make_template_df()
+    st.download_button(
+        "Download CSV template",
+        data=template_df.to_csv(index=False).encode("utf-8"),
+        file_name="sprintsense_template.csv",
+        mime="text/csv",
+        use_container_width=True,
+        key="download_template_global",
     )
 
-    # 1. auto-detect candidate mapping from column names
-    detected = infer_mapping(df_raw)  # {canonical_field -> candidate_col}
 
-    # 2. if we have a remembered mapping from this session, prefer it
-    remembered = st.session_state.get(LAST_MAPPING_KEY, {})
-    if remembered:
-        for logical_field, chosen_col in remembered.items():
-            if chosen_col in df_raw.columns:
-                detected[logical_field] = chosen_col
+def _render_health_check(df: pd.DataFrame) -> None:
+    st.subheader("Health check")
 
-    # UI layout
-    cols = st.columns(2)
+    total_issues = len(df)
+    n_sprints = df["sprint_id"].nunique() if "sprint_id" in df.columns else 0
 
-    with cols[0]:
-        st.subheader("Required")
-        req_mapping = {}
-        for logical_field in REQUIRED_CANONICAL:
-            opts = ["<none>"] + list(df_raw.columns)
-            default_val = detected.get(logical_field)
-            default_idx = opts.index(default_val) if default_val in opts else 0
+    sp_per_sprint = None
+    if "story_points" in df.columns and n_sprints > 0:
+        sp_per_sprint = df.groupby("sprint_id")["story_points"].sum().mean()
 
-            req_mapping[logical_field] = st.selectbox(
-                logical_field,
-                options=opts,
-                index=default_idx,
-                key=f"map_req_{logical_field}",
-            )
-
-    with cols[1]:
-        st.subheader("Optional")
-        opt_mapping = {}
-        for logical_field in OPTIONAL_CANONICAL:
-            opts = ["<none>"] + list(df_raw.columns)
-            default_val = detected.get(logical_field)
-            default_idx = opts.index(default_val) if default_val in opts else 0
-
-            opt_mapping[logical_field] = st.selectbox(
-                logical_field,
-                options=opts,
-                index=default_idx,
-                key=f"map_opt_{logical_field}",
-            )
-
-    # Merge everything into mapping {canonical_field -> original_column_or_None}
-    mapping = {}
-    for k, v in req_mapping.items():
-        mapping[k] = None if v == "<none>" else v
-    for k, v in opt_mapping.items():
-        mapping[k] = None if v == "<none>" else v
-
-    # Live preview of how data would look after mapping/normalization
-    st.markdown("##### Preview")
-    st.caption("This is what SprintSense will ingest after mapping and cleanup.")
-    preview_df = None
-    try:
-        adapted_tmp = apply_mapping(df_raw, mapping)
-        # validate rows = False so we can at least show shape/head even if some rows are still dirty
-        preview_df = validate_and_normalize(adapted_tmp, validate_rows=False)
-        st.dataframe(preview_df.head(10), use_container_width=True)
-    except Exception as e:
-        st.warning(f"Cannot preview yet: {e}")
-
-    # Confirm / Cancel
-    c1, c2 = st.columns([1, 1])
+    c1, c2, c3 = st.columns(3)
     with c1:
-        proceed = st.button(
+        st.metric("Issues loaded", f"{total_issues}")
+    with c2:
+        st.metric("Sprints detected", f"{n_sprints}")
+    with c3:
+        if sp_per_sprint is not None:
+            st.metric("Avg story points per sprint", f"{sp_per_sprint:.1f}")
+        else:
+            st.metric("Avg story points per sprint", "n/a")
+
+    optional_missing = []
+    for col in OPTIONAL_CANONICAL:
+        if col not in df.columns or df[col].isna().all():
+            optional_missing.append(col)
+
+    notes = []
+    if "resolved" in df.columns and df["resolved"].isna().all():
+        notes.append("No resolved dates found. Cycle time may not be meaningful.")
+
+    if "story_points" in df.columns and df["story_points"].fillna(0).sum() == 0:
+        notes.append("Story points are all blank or zero. Velocity falls back to issue counts.")
+
+    if optional_missing or notes:
+        with st.expander("Data quality notes", expanded=False):
+            if optional_missing:
+                st.markdown(
+                    "Missing optional fields: "
+                    + ", ".join(sorted(optional_missing))
+                )
+            for n in notes:
+                st.markdown(f"- {n}")
+
+
+def _mapping_ui(df_raw: pd.DataFrame) -> None:
+    st.markdown("#### Map columns")
+    st.caption(
+        "Map your CSV headers to SprintSense fields. Pre selections come from auto detection."
+    )
+
+    detected = infer_mapping(df_raw)
+    stored = st.session_state.get(MAPPING_KEY) or {}
+
+    cols_left, cols_right = st.columns(2)
+
+    req_mapping: dict[str, str | None] = {}
+    with cols_left:
+        st.subheader("Required")
+        for key in REQUIRED_CANONICAL:
+            options = ["<none>"] + list(df_raw.columns)
+            default = stored.get(key) or detected.get(key)
+
+            if default in df_raw.columns:
+                index = options.index(default)
+            else:
+                index = 0
+
+            choice = st.selectbox(
+                key,
+                options=options,
+                index=index,
+                key=f"map_req_{key}",
+            )
+            req_mapping[key] = None if choice == "<none>" else choice
+
+    opt_mapping: dict[str, str | None] = {}
+    with cols_right:
+        st.subheader("Optional")
+        for key in OPTIONAL_CANONICAL:
+            options = ["<none>"] + list(df_raw.columns)
+            default = stored.get(key) or detected.get(key)
+
+            if default in df_raw.columns:
+                index = options.index(default)
+            else:
+                index = 0
+
+            choice = st.selectbox(
+                key,
+                options=options,
+                index=index,
+                key=f"map_opt_{key}",
+            )
+            opt_mapping[key] = None if choice == "<none>" else choice
+
+    mapping: dict[str, str | None] = {}
+    mapping.update(req_mapping)
+    mapping.update(opt_mapping)
+
+    b1, b2, b3 = st.columns([1, 1, 1])
+    with b1:
+        confirm = st.button(
             "Confirm mapping",
             type="primary",
-            use_container_width=True
+            use_container_width=True,
         )
-    with c2:
-        cancel = st.button(
-            "Cancel",
+    with b2:
+        reset = st.button(
+            "Reset mapping",
             type="secondary",
-            use_container_width=True
+            use_container_width=True,
+        )
+    with b3:
+        show_errors = st.button(
+            "View last error report",
+            use_container_width=True,
+            disabled=st.session_state.get(ERROR_LOG_KEY) is None,
         )
 
-    if cancel:
-        # bail out to the current dataset without mutating it
-        st.stop()
+    if reset:
+        st.session_state[MAPPING_KEY] = None
+        st.session_state[ERROR_LOG_KEY] = None
+        st.toast("Mapping reset.", icon="🧹")
 
-    if proceed:
+    if show_errors and st.session_state.get(ERROR_LOG_KEY):
+        with st.expander("Upload error report", expanded=True):
+            st.code(st.session_state[ERROR_LOG_KEY])
+            st.download_button(
+                "Download error log",
+                data=str(st.session_state[ERROR_LOG_KEY]).encode("utf-8"),
+                file_name="upload_error.log",
+                mime="text/plain",
+                use_container_width=True,
+                key="download_error_log",
+            )
+
+    if confirm:
         try:
             adapted = apply_mapping(df_raw, mapping)
             df_clean = validate_and_normalize(adapted)
 
-            # persist mapping + preview so next upload is easier
-            st.session_state[LAST_MAPPING_KEY] = {
-                k: v for k, v in mapping.items() if v is not None
-            }
-            st.session_state[LAST_PREVIEW_KEY] = df_clean.head(20)
+            st.session_state[SESSION_KEY] = df_clean
+            st.session_state[SHARED_DF_KEY] = df_clean
+            st.session_state[SHARED_SRC_KEY] = (
+                f"Using mapped upload · {len(df_clean)} rows · "
+                f"{df_clean['sprint_id'].nunique()} sprint(s)"
+            )
+
+            st.session_state[MAPPING_KEY] = mapping
+            st.session_state[ERROR_LOG_KEY] = None
 
             st.success("Upload mapped and validated.")
-            return df_clean
-        except Exception as e:
-            st.error(f"Mapping/validation failed: {e}")
-            return None
+        except Exception as exc:  # noqa: F841
+            msg = str(exc)
+            st.session_state[ERROR_LOG_KEY] = msg
+            st.error(
+                "Mapping or validation failed. Open the error report for details."
+            )
 
-    return None
 
-# -----------------------------------------------------------------------------
-# Upload section (always visible at top)
-# -----------------------------------------------------------------------------
+_ensure_state_defaults()
+_data_dictionary()
+
 with st.expander("Upload sprint CSV", expanded=False):
+    st.caption("Need a starting point for your data? Download the normalized CSV template.")
+
+    tmpl_df = make_template_df()
+    st.download_button(
+        "Download CSV template",
+        data=tmpl_df.to_csv(index=False).encode("utf-8"),
+        file_name="sprintsense_template.csv",
+        mime="text/csv",
+        use_container_width=True,
+        key="download_template_inside_upload",
+    )
+
+    st.divider()
     up = st.file_uploader("CSV", type=["csv"])
 
-    # "Use uploaded" -> try direct validate first. If validation fails,
-    # we drop into manual mapping flow below.
-    c1, c2 = st.columns([1, 1])
+    c1, c2, c3 = st.columns([1, 1, 1])
+
     with c1:
-        clicked_use_uploaded = st.button(
+        use_uploaded = st.button(
             "Use uploaded",
             type="primary",
-            disabled=(up is None),
+            use_container_width=True,
+            disabled=up is None,
         )
     with c2:
-        clicked_use_sample = st.button(
-            "Use bundled sample",
-            type="secondary",
-        )
+        use_sample = st.button("Use bundled sample", use_container_width=True)
+    with c3:
+        _download_template_button_global()
 
-    # Branch: bundled sample button
-    if clicked_use_sample:
+    if use_uploaded and up is not None:
+        try:
+            df_raw = _load_csv_bytes(up)
+            df_clean = validate_and_normalize(df_raw)
+
+            st.session_state[SESSION_KEY] = df_clean
+            st.session_state[SOURCE_KEY] = f"uploaded: {up.name}"
+            st.session_state[SHARED_DF_KEY] = df_clean
+            st.session_state[SHARED_SRC_KEY] = (
+                f"Using {st.session_state[SOURCE_KEY]} · {len(df_clean)} rows · "
+                f"{df_clean['sprint_id'].nunique()} sprint(s)"
+            )
+
+            st.session_state[RAW_UPLOAD_KEY] = df_raw
+            st.session_state[ERROR_LOG_KEY] = None
+
+            st.toast("Loaded uploaded CSV.", icon="✅")
+        except Exception as exc:  # noqa: F841
+            msg = str(exc)
+            st.session_state[RAW_UPLOAD_KEY] = _load_csv_bytes(up)
+            st.session_state[ERROR_LOG_KEY] = msg
+            st.warning(
+                "Validation failed. Scroll down to map columns and inspect the error report."
+            )
+
+    if use_sample:
         df_sm = _read_and_validate("data/sample_sprint.csv")
 
         st.session_state[SESSION_KEY] = df_sm
-        st.session_state[SOURCE_KEY]  = "sample: data/sample_sprint.csv"
-        st.session_state[SHARED_DF_KEY]  = df_sm
+        st.session_state[SOURCE_KEY] = "sample: data/sample_sprint.csv"
+        st.session_state[SHARED_DF_KEY] = df_sm
         st.session_state[SHARED_SRC_KEY] = (
-            f"Using {st.session_state[SOURCE_KEY]} · "
-            f"{len(df_sm)} rows · {df_sm['sprint_id'].nunique()} sprint(s)"
+            f"Using {st.session_state[SOURCE_KEY]} · {len(df_sm)} rows · "
+            f"{df_sm['sprint_id'].nunique()} sprint(s)"
         )
-        st.session_state[LAST_PREVIEW_KEY] = df_sm.head(20)
+
+        st.session_state[RAW_UPLOAD_KEY] = None
+        st.session_state[ERROR_LOG_KEY] = None
 
         st.toast("Loaded sample CSV.", icon="📦")
 
-    # Branch: user clicked "Use uploaded"
-    if clicked_use_uploaded and up is not None:
-        raw_df = _load_csv_bytes(up)
-        try:
-            # Try strict validation directly
-            df_up = validate_and_normalize(raw_df)
 
-            st.session_state[SESSION_KEY] = df_up
-            st.session_state[SOURCE_KEY]  = f"uploaded: {up.name}"
-            st.session_state[SHARED_DF_KEY]  = df_up
-            st.session_state[SHARED_SRC_KEY] = (
-                f"Using {st.session_state[SOURCE_KEY]} · "
-                f"{len[df_up] if callable(getattr(df_up, '__len__', None)) else len(df_up)} rows · "
-                f"{df_up['sprint_id'].nunique()} sprint(s)"
-            )
-            st.session_state[LAST_PREVIEW_KEY] = df_up.head(20)
+if st.session_state.get(SHARED_SRC_KEY):
+    st.info(st.session_state[SHARED_SRC_KEY])
 
-            st.toast("Loaded uploaded CSV.", icon="✅")
+df_current = st.session_state[SESSION_KEY]
+st.session_state[SHARED_DF_KEY] = df_current
 
-        except Exception as e:
-            # Direct validation failed, so show mapping UI inline.
-            st.error(f"Validation failed: {e}")
-            mapped_df = _mapping_ui(raw_df)
+st.subheader("Upload health")
+_render_health_check(df_current)
 
-            if mapped_df is not None:
-                st.session_state[SESSION_KEY] = mapped_df
-                st.session_state[SOURCE_KEY]  = f"uploaded: {up.name}"
-                st.session_state[SHARED_DF_KEY]  = mapped_df
-                st.session_state[SHARED_SRC_KEY] = (
-                    f"Using {st.session_state[SOURCE_KEY]} · "
-                    f"{len(mapped_df)} rows · {mapped_df['sprint_id'].nunique()} sprint(s)"
-                )
-                st.session_state[LAST_PREVIEW_KEY] = mapped_df.head(20)
+if st.session_state.get(RAW_UPLOAD_KEY) is not None:
+    st.markdown("---")
+    st.subheader("Column mapping")
+    _mapping_ui(st.session_state[RAW_UPLOAD_KEY])
 
-                st.toast("Loaded uploaded CSV (mapped).", icon="✅")
+st.markdown("---")
+st.subheader("Current data preview")
 
-# -----------------------------------------------------------------------------
-# If we still don't have a dataset in session (first page load), default to sample
-# -----------------------------------------------------------------------------
-if SESSION_KEY not in st.session_state:
-    df0 = _read_and_validate("data/sample_sprint.csv")
+with st.expander("Current data preview (first 20 rows)", expanded=False):
+    st.dataframe(df_current.head(20), use_container_width=True)
 
-    st.session_state[SESSION_KEY] = df0
-    st.session_state[SOURCE_KEY]  = "sample: data/sample_sprint.csv"
-    st.session_state[SHARED_DF_KEY]  = df0
-    st.session_state[SHARED_SRC_KEY] = (
-        f"Using {st.session_state[SOURCE_KEY]} · "
-        f"{len(df0)} rows · {df0['sprint_id'].nunique()} sprint(s)"
-    )
-    st.session_state[LAST_PREVIEW_KEY] = df0.head(20)
+st.markdown("---")
+st.subheader("Filters")
 
-# Always sync these aliases for other pages
-df = st.session_state[SESSION_KEY]
-st.session_state[SHARED_DF_KEY]  = df
-st.session_state[SHARED_SRC_KEY] = (
-    f"Using {st.session_state[SOURCE_KEY]} · "
-    f"{len(df)} rows · {df['sprint_id'].nunique()} sprint(s)"
+all_sprints = sorted(df_current["sprint_id"].astype(str).unique())
+
+sidebar = st.sidebar
+sidebar.subheader("Filters")
+
+sel_sprints = sidebar.multiselect(
+    "Select sprint(s)",
+    all_sprints,
+    default=all_sprints,
 )
 
-# -----------------------------------------------------------------------------
-# Data source banner + preview
-# -----------------------------------------------------------------------------
-st.info(st.session_state[SHARED_SRC_KEY])
-st.caption(f"Data source: {st.session_state[SOURCE_KEY]}")
+kpi_options = {
+    "velocity_sp": "Velocity",
+    "throughput_issues": "Throughput",
+    "carryover_rate": "Carryover rate",
+    "cycle_median_days": "Cycle time",
+    "defect_ratio": "Defect ratio",
+}
 
-if st.session_state.get(LAST_PREVIEW_KEY) is not None:
-    with st.expander("Current data preview (first 20 rows)", expanded=False):
-        st.dataframe(
-            st.session_state[LAST_PREVIEW_KEY],
-            use_container_width=True,
-            height=300,
-        )
+default_kpis = list(kpi_options.keys())
 
-# --- High-level summary row (Week 4.4) ---
-st.markdown("### Summary")
-col_a, col_b, col_c = st.columns(3)
+sel_kpis = sidebar.multiselect(
+    "Select KPIs to show",
+    default_kpis,
+    default=default_kpis,
+)
 
-# total issues in dataset
-total_issues = len(df)
-
-# avg cycle time in days (only for rows that have both created + resolved)
-if {"created", "resolved"}.issubset(df.columns):
-    created_dt = pd.to_datetime(df["created"], errors="coerce", utc=True)
-    resolved_dt = pd.to_datetime(df["resolved"], errors="coerce", utc=True)
-    valid_mask = created_dt.notna() & resolved_dt.notna()
-    avg_cycle_days = (
-        (resolved_dt[valid_mask] - created_dt[valid_mask])
-        .dt.total_seconds()
-        .div(86400.0)
-        .mean()
-    )
-    if pd.isna(avg_cycle_days):
-        avg_cycle_days_disp = "—"
-    else:
-        avg_cycle_days_disp = f"{avg_cycle_days:.1f} d"
+if sel_sprints:
+    df_filtered = df_current[df_current["sprint_id"].astype(str).isin(sel_sprints)]
 else:
-    avg_cycle_days_disp = "—"
+    df_filtered = df_current.copy()
 
-# total story points delivered (sum of story_points where status looks Done/Closed and resolved in sprint window)
-if "story_points" in df.columns:
-    total_sp = pd.to_numeric(df["story_points"], errors="coerce").fillna(0).sum()
-    total_sp_disp = f"{total_sp:.1f} SP"
-else:
-    total_sp_disp = "—"
-
-with col_a:
-    st.metric("Total issues", value=str(total_issues))
-with col_b:
-    st.metric("Avg cycle time", value=avg_cycle_days_disp)
-with col_c:
-    st.metric("Total story points", value=total_sp_disp)
+if df_filtered.empty:
+    st.warning("No data for the selected sprint filters.")
+    st.stop()
 
 st.markdown("---")
+st.subheader("Summary")
 
-# KPI summary cards
-st.subheader("KPIs")
-render_summary_cards(df)
-st.markdown("---")
+render_summary_cards(df_filtered)
 
-# -----------------------------------------------------------------------------
-# Per-sprint KPI tables
-# -----------------------------------------------------------------------------
-vel = calc_velocity(df)
-thr = calc_throughput(df)
-car = calc_carryover_rate(df)
-cyc = calc_cycle_time(df)
-dr  = calc_defect_ratio(df)
+vel = calc_velocity(df_filtered)
+thr = calc_throughput(df_filtered)
+car = calc_carryover_rate(df_filtered)
+cyc = calc_cycle_time(df_filtered)
+dr = calc_defect_ratio(df_filtered)
+
+kpi = (
+    vel.merge(thr, on="sprint_id")
+    .merge(car, on="sprint_id")
+    .merge(cyc, on="sprint_id")
+    .merge(dr, on="sprint_id")
+)
+
+st.subheader("KPI table")
+st.dataframe(kpi, use_container_width=True)
+
+st.subheader("Charts")
 
 c1, c2 = st.columns(2)
-with c1:
-    st.subheader("Velocity (story points) by sprint")
-    st.dataframe(vel.round(2), use_container_width=True)
-with c2:
-    st.subheader("Throughput (issues) by sprint")
-    st.dataframe(thr.round(2), use_container_width=True)
+
+if "velocity_sp" in sel_kpis:
+    with c1:
+        st.plotly_chart(
+            tidy(
+                px.bar(
+                    vel,
+                    x="sprint_id",
+                    y="velocity_sp",
+                    title="Velocity by sprint",
+                )
+            ),
+            use_container_width=True,
+        )
+
+if "throughput_issues" in sel_kpis:
+    with c2:
+        st.plotly_chart(
+            tidy(
+                px.bar(
+                    thr,
+                    x="sprint_id",
+                    y="throughput_issues",
+                    title="Throughput by sprint",
+                )
+            ),
+            use_container_width=True,
+        )
 
 c3, c4 = st.columns(2)
-with c3:
-    st.subheader("Carryover rate")
-    st.dataframe(car.round(2), use_container_width=True)
-with c4:
-    st.subheader("Cycle time (median days)")
-    st.dataframe(cyc.round(2), use_container_width=True)
 
-st.subheader("Defect ratio")
-st.dataframe(dr.round(2), use_container_width=True)
+if "carryover_rate" in sel_kpis:
+    with c3:
+        st.plotly_chart(
+            tidy(
+                px.line(
+                    car,
+                    x="sprint_id",
+                    y="carryover_rate",
+                    markers=True,
+                    title="Carryover rate",
+                )
+            ),
+            use_container_width=True,
+        )
 
-# Download cleaned CSV (what the app is actually using right now)
-csv_bytes = df.to_csv(index=False).encode("utf-8")
+if "cycle_median_days" in sel_kpis:
+    with c4:
+        st.plotly_chart(
+            tidy(
+                px.line(
+                    cyc,
+                    x="sprint_id",
+                    y="cycle_median_days",
+                    markers=True,
+                    title="Cycle time (median days)",
+                )
+            ),
+            use_container_width=True,
+        )
+
+if "defect_ratio" in sel_kpis:
+    st.plotly_chart(
+        tidy(
+            px.line(
+                dr,
+                x="sprint_id",
+                y="defect_ratio",
+                markers=True,
+                title="Defect ratio",
+            )
+        ),
+        use_container_width=True,
+    )
+
+st.markdown("---")
+st.subheader("Download cleaned CSV")
+
 st.download_button(
-    label="Download cleaned CSV",
-    data=csv_bytes,
+    "Download cleaned CSV",
+    data=df_filtered.to_csv(index=False).encode("utf-8"),
     file_name="sprintsense_cleaned.csv",
     mime="text/csv",
     use_container_width=True,
-)
-
-st.markdown("---")
-
-# -----------------------------------------------------------------------------
-# Charts
-# -----------------------------------------------------------------------------
-st.subheader("Charts")
-
-
-st.plotly_chart(
-    tidy(
-        px.bar(vel, x="sprint_id", y="velocity_sp"),
-        title="Velocity by sprint",
-        x_title="sprint_id",
-        y_title="velocity_sp",
-    ),
-    use_container_width=True,
-)
-
-st.plotly_chart(
-    tidy(
-        px.bar(thr, x="sprint_id", y="throughput_issues"),
-        title="Throughput by sprint",
-        x_title="sprint_id",
-        y_title="throughput_issues",
-    ),
-    use_container_width=True,
-)
-
-st.plotly_chart(
-    tidy(
-        px.line(car, x="sprint_id", y="carryover_rate", markers=True),
-        title="Carryover rate",
-        x_title="sprint_id",
-        y_title="carryover_rate",
-    ),
-    use_container_width=True,
-)
-
-st.plotly_chart(
-    tidy(
-        px.line(cyc, x="sprint_id", y="cycle_median_days", markers=True),
-        title="Cycle time (median days)",
-        x_title="sprint_id",
-        y_title="cycle_median_days",
-    ),
-    use_container_width=True,
-)
-
-st.plotly_chart(
-    tidy(
-        px.line(dr, x="sprint_id", y="defect_ratio", markers=True),
-        title="Defect ratio",
-        x_title="sprint_id",
-        y_title="defect_ratio",
-    ),
-    use_container_width=True,
+    key="download_cleaned_csv",
 )
